@@ -31,6 +31,21 @@ function requireSupabase() {
   return supabase;
 }
 
+function formatSupabaseError(error: unknown) {
+  if (error && typeof error === "object") {
+    const maybeMessage = (error as { message?: string }).message;
+    const maybeCode = (error as { code?: string }).code;
+    const maybeDetails = (error as { details?: string }).details;
+    const maybeHint = (error as { hint?: string }).hint;
+
+    return [maybeMessage, maybeCode ? `code=${maybeCode}` : "", maybeDetails, maybeHint]
+      .filter(Boolean)
+      .join(" | ");
+  }
+
+  return error instanceof Error ? error.message : "Unknown Supabase error";
+}
+
 export function mapApplicationRow(row: ApplicationRow): ApplicationRecord {
   return {
     id: row.id,
@@ -65,7 +80,7 @@ export async function loadApplications(userId: string) {
     .eq("user_id", userId)
     .order("created_at", { ascending: false });
 
-  if (error) throw error;
+  if (error) throw new Error(formatSupabaseError(error));
   return (data ?? []).map(mapApplicationRow);
 }
 
@@ -77,7 +92,7 @@ export async function loadResumes(userId: string) {
     .eq("user_id", userId)
     .order("created_at", { ascending: false });
 
-  if (error) throw error;
+  if (error) throw new Error(formatSupabaseError(error));
   return (data ?? []).map(mapResumeRow);
 }
 
@@ -96,7 +111,7 @@ export async function createApplication(userId: string, input: Omit<ApplicationR
     .select("*")
     .single();
 
-  if (error) throw error;
+  if (error) throw new Error(formatSupabaseError(error));
   return mapApplicationRow(data as ApplicationRow);
 }
 
@@ -120,14 +135,14 @@ export async function updateApplication(
     .select("*")
     .single();
 
-  if (error) throw error;
+  if (error) throw new Error(formatSupabaseError(error));
   return mapApplicationRow(data as ApplicationRow);
 }
 
 export async function deleteApplication(userId: string, id: string) {
   const client = requireSupabase();
   const { error } = await client.from("applications").delete().eq("id", id).eq("user_id", userId);
-  if (error) throw error;
+  if (error) throw new Error(formatSupabaseError(error));
 }
 
 export async function createResume(
@@ -146,12 +161,12 @@ export async function createResume(
     .select("*")
     .single();
 
-  if (error) throw error;
+  if (error) throw new Error(formatSupabaseError(error));
   return mapResumeRow(data as ResumeRow);
 }
 
 export async function deleteResume(userId: string, id: string) {
   const client = requireSupabase();
   const { error } = await client.from("resumes").delete().eq("id", id).eq("user_id", userId);
-  if (error) throw error;
+  if (error) throw new Error(formatSupabaseError(error));
 }

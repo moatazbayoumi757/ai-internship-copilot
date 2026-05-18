@@ -21,6 +21,13 @@ Every signed-in user sees only their own data. New accounts start with an empty 
 
 1. Create a new Supabase project.
 2. In the Supabase SQL editor, run [`supabase/schema.sql`](./supabase/schema.sql).
+   If the tables already exist, also run the access grants from the bottom of the file:
+
+   ```sql
+   grant usage on schema public to anon, authenticated;
+   grant select, insert, update, delete on table public.applications to authenticated;
+   grant select, insert, update, delete on table public.resumes to authenticated;
+   ```
 3. In Supabase Auth settings, enable email/password sign up and sign in.
 4. Copy the frontend env example:
 
@@ -82,4 +89,3 @@ Both tables include `user_id`, timestamps, and row-level security policies that 
 - Empty-state screens for new accounts
 - Dark mode and responsive UI
 - Frontend-local AI tools remain available
-

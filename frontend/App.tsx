@@ -158,6 +158,16 @@ function toPolyline(values: number[]) {
     .join(" ");
 }
 
+function describeError(error: unknown) {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return "Unknown error";
+  }
+}
+
 export function App() {
   const [theme, setTheme] = useState<ThemeMode>(readTheme);
   const [session, setSession] = useState<SessionUser | null>(null);
@@ -238,7 +248,8 @@ export function App() {
       })
       .catch((error) => {
         if (!active) return;
-        setWorkspaceError(error instanceof Error ? error.message : "Failed to load your data.");
+        console.error("Failed to load Supabase data", error);
+        setWorkspaceError(describeError(error) || "Failed to load your data.");
       })
       .finally(() => {
         if (active) setLoadingData(false);
@@ -633,7 +644,8 @@ function Workspace({
       setView("Dashboard");
       setModal(null);
     } catch (caught) {
-      setActionError(caught instanceof Error ? caught.message : "Unable to save the application.");
+      console.error("Failed to save application", caught);
+      setActionError(describeError(caught) || "Unable to save the application.");
     } finally {
       setSavingApplication(false);
     }
@@ -656,7 +668,8 @@ function Workspace({
       setModal(null);
       setView("Resume Lab");
     } catch (caught) {
-      setActionError(caught instanceof Error ? caught.message : "Unable to save the resume.");
+      console.error("Failed to save resume", caught);
+      setActionError(describeError(caught) || "Unable to save the resume.");
     } finally {
       setSavingResume(false);
     }
@@ -668,7 +681,8 @@ function Workspace({
     try {
       await onDeleteApplication(applicationId);
     } catch (caught) {
-      setActionError(caught instanceof Error ? caught.message : "Unable to delete the application.");
+      console.error("Failed to delete application", caught);
+      setActionError(describeError(caught) || "Unable to delete the application.");
     }
   }
 
@@ -678,7 +692,8 @@ function Workspace({
     try {
       await onDeleteResume(resumeId);
     } catch (caught) {
-      setActionError(caught instanceof Error ? caught.message : "Unable to delete the resume.");
+      console.error("Failed to delete resume", caught);
+      setActionError(describeError(caught) || "Unable to delete the resume.");
     }
   }
 

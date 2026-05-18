@@ -25,6 +25,10 @@ create table if not exists public.resumes (
 create index if not exists applications_user_id_idx on public.applications (user_id);
 create index if not exists resumes_user_id_idx on public.resumes (user_id);
 
+grant usage on schema public to anon, authenticated;
+grant select, insert, update, delete on table public.applications to authenticated;
+grant select, insert, update, delete on table public.resumes to authenticated;
+
 create or replace function public.set_updated_at()
 returns trigger
 language plpgsql
