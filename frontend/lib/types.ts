@@ -12,6 +12,8 @@ export type ApplicationRecord = {
   updatedAt: string;
 };
 
+export type Application = ApplicationRecord;
+
 export type ResumeRecord = {
   id: string;
   userId: string;

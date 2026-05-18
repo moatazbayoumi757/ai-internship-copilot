@@ -252,7 +252,10 @@ export function App() {
   useEffect(() => {
     if (!supabase || !session) return;
 
-    const channel = supabase
+    const client = supabase;
+    if (!client) return;
+
+    const channel = client
       .channel(`workspace-sync-${session.id}`)
       .on(
         "postgres_changes",
@@ -271,7 +274,7 @@ export function App() {
       .subscribe();
 
     return () => {
-      void supabase.removeChannel(channel);
+      void client.removeChannel(channel);
     };
   }, [session]);
 

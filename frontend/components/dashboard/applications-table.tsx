@@ -1,7 +1,7 @@
 import { StatusBadge } from "@/components/ui/status-badge";
-import type { Application } from "@/lib/types";
+import type { ApplicationRecord } from "@/lib/types";
 
-export function ApplicationsTable({ applications }: { applications: Application[] }) {
+export function ApplicationsTable({ applications }: { applications: ApplicationRecord[] }) {
   return (
     <section className="overflow-hidden rounded-lg border border-line bg-white shadow-panel">
       <div className="border-b border-line px-5 py-4">
@@ -19,17 +19,25 @@ export function ApplicationsTable({ applications }: { applications: Application[
             </tr>
           </thead>
           <tbody className="divide-y divide-line">
-            {applications.map((application) => (
-              <tr key={application.id}>
-                <td className="px-5 py-4 font-medium">{application.companyName}</td>
-                <td className="px-5 py-4 text-slate-600">{application.roleTitle}</td>
-                <td className="px-5 py-4">
-                  <StatusBadge status={application.status} />
+            {applications.length === 0 ? (
+              <tr>
+                <td className="px-5 py-4 text-slate-500" colSpan={5}>
+                  No applications saved yet.
                 </td>
-                <td className="px-5 py-4 text-slate-600">{application.appliedOn}</td>
-                <td className="px-5 py-4 text-slate-600">{application.location}</td>
               </tr>
-            ))}
+            ) : (
+              applications.map((application) => (
+                <tr key={application.id}>
+                  <td className="px-5 py-4 font-medium">{application.companyName}</td>
+                  <td className="px-5 py-4 text-slate-600">{application.roleTitle}</td>
+                  <td className="px-5 py-4">
+                    <StatusBadge status={application.status} />
+                  </td>
+                  <td className="px-5 py-4 text-slate-600">{application.appliedOn}</td>
+                  <td className="px-5 py-4 text-slate-600">{application.location}</td>
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </div>
