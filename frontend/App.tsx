@@ -461,7 +461,10 @@ function AuthScreen({ onAuthenticate }: { onAuthenticate: (mode: AuthMode, email
             Email
             <input
               autoComplete="email"
-              onChange={(event) => setSnapshot((current) => ({ ...current, email: event.currentTarget.value }))}
+              onChange={(event) => {
+                const value = event.currentTarget.value;
+                setSnapshot((current) => ({ ...current, email: value }));
+              }}
               placeholder="you@example.com"
               required
               type="email"
@@ -472,7 +475,10 @@ function AuthScreen({ onAuthenticate }: { onAuthenticate: (mode: AuthMode, email
             Password
             <input
               autoComplete={mode === "login" ? "current-password" : "new-password"}
-              onChange={(event) => setSnapshot((current) => ({ ...current, password: event.currentTarget.value }))}
+              onChange={(event) => {
+                const value = event.currentTarget.value;
+                setSnapshot((current) => ({ ...current, password: value }));
+              }}
               placeholder="••••••••"
               required
               type="password"
@@ -484,7 +490,10 @@ function AuthScreen({ onAuthenticate }: { onAuthenticate: (mode: AuthMode, email
               Confirm password
               <input
                 autoComplete="new-password"
-                onChange={(event) => setConfirmPassword(event.currentTarget.value)}
+                onChange={(event) => {
+                  const value = event.currentTarget.value;
+                  setConfirmPassword(value);
+                }}
                 placeholder="••••••••"
                 required
                 type="password"
@@ -757,7 +766,10 @@ function Workspace({
               Resume PDF
               <input
                 accept="application/pdf,.pdf"
-                onChange={(event) => setSelectedResumeFile(event.currentTarget.files?.[0] ?? null)}
+                onChange={(event) => {
+                  const file = event.currentTarget.files?.[0] ?? null;
+                  setSelectedResumeFile(file);
+                }}
                 required
                 type="file"
               />
@@ -768,7 +780,10 @@ function Workspace({
             <label>
               Target role
               <input
-                onChange={(event) => setResumeTargetRole(event.currentTarget.value)}
+                onChange={(event) => {
+                  const value = event.currentTarget.value;
+                  setResumeTargetRole(value);
+                }}
                 placeholder="Software Engineering Intern"
                 required
                 value={resumeTargetRole}
@@ -792,9 +807,10 @@ function Workspace({
             <label>
               Company
               <input
-                onChange={(event) =>
-                  setApplicationForm((current) => ({ ...current, companyName: event.currentTarget.value }))
-                }
+                onChange={(event) => {
+                  const value = event.currentTarget.value;
+                  setApplicationForm((current) => ({ ...current, companyName: value }));
+                }}
                 placeholder="Anthropic"
                 required
                 value={applicationForm.companyName}
@@ -803,9 +819,10 @@ function Workspace({
             <label>
               Role
               <input
-                onChange={(event) =>
-                  setApplicationForm((current) => ({ ...current, roleTitle: event.currentTarget.value }))
-                }
+                onChange={(event) => {
+                  const value = event.currentTarget.value;
+                  setApplicationForm((current) => ({ ...current, roleTitle: value }));
+                }}
                 placeholder="Product Engineering Intern"
                 required
                 value={applicationForm.roleTitle}
@@ -814,12 +831,13 @@ function Workspace({
             <label>
               Status
               <select
-                onChange={(event) =>
+                onChange={(event) => {
+                  const value = event.currentTarget.value as ApplicationStatus;
                   setApplicationForm((current) => ({
                     ...current,
-                    status: event.currentTarget.value as ApplicationStatus,
-                  }))
-                }
+                    status: value,
+                  }));
+                }}
                 value={applicationForm.status}
               >
                 {statuses.map((status) => (
@@ -830,9 +848,10 @@ function Workspace({
             <label>
               Applied on
               <input
-                onChange={(event) =>
-                  setApplicationForm((current) => ({ ...current, appliedOn: event.currentTarget.value }))
-                }
+                onChange={(event) => {
+                  const value = event.currentTarget.value;
+                  setApplicationForm((current) => ({ ...current, appliedOn: value }));
+                }}
                 type="date"
                 value={applicationForm.appliedOn}
                 required
@@ -841,9 +860,10 @@ function Workspace({
             <label>
               Location
               <input
-                onChange={(event) =>
-                  setApplicationForm((current) => ({ ...current, location: event.currentTarget.value }))
-                }
+                onChange={(event) => {
+                  const value = event.currentTarget.value;
+                  setApplicationForm((current) => ({ ...current, location: value }));
+                }}
                 placeholder="Remote"
                 required
                 value={applicationForm.location}
@@ -1153,7 +1173,10 @@ function AiTools() {
             <label>
               Job description
               <textarea
-                onChange={(event) => setJobDescription(event.currentTarget.value)}
+                onChange={(event) => {
+                  const value = event.currentTarget.value;
+                  setJobDescription(value);
+                }}
                 placeholder="Paste a job description mentioning React, TypeScript, Python, SQL, AWS..."
                 value={jobDescription}
               />
@@ -1186,36 +1209,72 @@ function AiTools() {
             <h3>Outreach Draft</h3>
             <label>
               Recruiter name
-              <input value={recruiterName} onChange={(event) => setRecruiterName(event.currentTarget.value)} />
+              <input
+                value={recruiterName}
+                onChange={(event) => {
+                  const value = event.currentTarget.value;
+                  setRecruiterName(value);
+                }}
+              />
             </label>
             <label>
               Company
-              <input value={company} onChange={(event) => setCompany(event.currentTarget.value)} />
+              <input
+                value={company}
+                onChange={(event) => {
+                  const value = event.currentTarget.value;
+                  setCompany(value);
+                }}
+              />
             </label>
             <label>
               Role
-              <input value={role} onChange={(event) => setRole(event.currentTarget.value)} />
+              <input
+                value={role}
+                onChange={(event) => {
+                  const value = event.currentTarget.value;
+                  setRole(value);
+                }}
+              />
             </label>
             <label>
               How I found them
-              <input value={howIFoundThem} onChange={(event) => setHowIFoundThem(event.currentTarget.value)} />
+              <input
+                value={howIFoundThem}
+                onChange={(event) => {
+                  const value = event.currentTarget.value;
+                  setHowIFoundThem(value);
+                }}
+              />
             </label>
             <label>
               Background summary
-              <textarea value={backgroundSummary} onChange={(event) => setBackgroundSummary(event.currentTarget.value)} />
+              <textarea
+                value={backgroundSummary}
+                onChange={(event) => {
+                  const value = event.currentTarget.value;
+                  setBackgroundSummary(value);
+                }}
+              />
             </label>
             <label>
               Reason for reaching out
               <textarea
                 value={reasonForReachingOut}
-                onChange={(event) => setReasonForReachingOut(event.currentTarget.value)}
+                onChange={(event) => {
+                  const value = event.currentTarget.value;
+                  setReasonForReachingOut(value);
+                }}
               />
             </label>
             <label>
               Message type
               <select
                 value={messageType}
-                onChange={(event) => setMessageType(event.currentTarget.value as OutreachMessageType)}
+                onChange={(event) => {
+                  const value = event.currentTarget.value as OutreachMessageType;
+                  setMessageType(value);
+                }}
               >
                 <option>LinkedIn</option>
                 <option>Email</option>
@@ -1224,7 +1283,13 @@ function AiTools() {
             </label>
             <label>
               Tone
-              <select value={tone} onChange={(event) => setTone(event.currentTarget.value as OutreachTone)}>
+              <select
+                value={tone}
+                onChange={(event) => {
+                  const value = event.currentTarget.value as OutreachTone;
+                  setTone(value);
+                }}
+              >
                 <option>Warm</option>
                 <option>Professional</option>
                 <option>Casual</option>
