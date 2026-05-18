@@ -494,7 +494,7 @@ function AuthScreen({ onAuthenticate }: { onAuthenticate: (mode: AuthMode, email
           )}
           {error && <p className="error-text">{error}</p>}
           {notice && <p className="success-text">{notice}</p>}
-          <button className="button primary" disabled={loading}>
+          <button className="button primary" type="submit" disabled={loading}>
             {loading ? "Working..." : mode === "login" ? "Log in" : "Create account"}
           </button>
         </form>
