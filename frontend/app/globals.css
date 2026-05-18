@@ -71,6 +71,10 @@ button {
   cursor: pointer;
 }
 
+button:active {
+  transform: translateY(0) scale(0.99);
+}
+
 .dashboard {
   min-height: 100vh;
 }
@@ -126,6 +130,33 @@ button {
 .dialog-actions {
   display: flex;
   gap: 0.75rem;
+}
+
+.auth-shell {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 1rem;
+}
+
+.auth-panel {
+  display: grid;
+  gap: 1rem;
+  width: min(100%, 33rem);
+  padding: 1.5rem;
+}
+
+.auth-panel h1 {
+  margin: 0.15rem 0 0.45rem;
+  font-size: 2.3rem;
+}
+
+.auth-tabs {
+  width: 100%;
+}
+
+.auth-tabs button {
+  flex: 1;
 }
 
 .button {
@@ -207,6 +238,17 @@ button {
   box-shadow: 0 12px 24px rgba(220, 38, 38, 0.18);
 }
 
+.icon-button.edit {
+  color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 12%, var(--panel-strong));
+  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.12);
+}
+
+.icon-button.edit:hover {
+  background: color-mix(in srgb, var(--blue) 18%, var(--panel-strong));
+  box-shadow: 0 12px 24px rgba(37, 99, 235, 0.18);
+}
+
 .dashboard-body,
 .stats-grid,
 .analytics-grid,
@@ -218,6 +260,14 @@ button {
 
 .dashboard-body {
   padding: 1rem;
+}
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  justify-content: space-between;
+  padding: 1.25rem;
 }
 
 .panel {
@@ -307,7 +357,7 @@ button {
 
 table {
   width: 100%;
-  min-width: 42rem;
+  min-width: 48rem;
   border-collapse: collapse;
   font-size: 0.875rem;
 }
@@ -317,6 +367,7 @@ td {
   border-bottom: 1px solid var(--line);
   padding: 0.8rem 1.25rem;
   text-align: left;
+  vertical-align: middle;
 }
 
 th:last-child,
@@ -419,6 +470,12 @@ tbody tr:hover {
   top: 0.9rem;
   right: 0.9rem;
   opacity: 0.78;
+}
+
+.row-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.35rem;
 }
 
 .resume-card p,
@@ -670,7 +727,25 @@ tbody tr:hover {
   line-height: 1.65;
 }
 
+.trend-labels {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
 .error-text {
+  color: #b91c1c;
+}
+
+.success-text {
+  color: #047857;
+}
+
+.error-banner {
+  padding: 1rem 1.25rem;
   color: #b91c1c;
 }
 

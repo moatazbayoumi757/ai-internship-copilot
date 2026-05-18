@@ -1,93 +1,85 @@
 # AI Internship Application Copilot
 
-Full-stack internship application workspace built with Vite, React, FastAPI, PostgreSQL, and Docker.
+Vite + React internship tracker with Supabase auth and per-user PostgreSQL data.
 
 ## Stack
 
 - Frontend: Vite, React, TypeScript
-- Backend: FastAPI, SQLAlchemy, JWT authentication
-- Database: PostgreSQL
-- AI: frontend-local outreach draft generation
-- Runtime: Docker Compose
+- Auth and data: Supabase
+- Database: Supabase PostgreSQL
+- Deployment: Vercel
 
-## Current scope
+## What is stored in Supabase
 
-Implemented in the first pass:
+- Internship applications
+- Resume metadata
+- User ownership through `user_id`
 
-- Production-shaped monorepo layout
-- JWT-based user registration and login
-- PostgreSQL schema for users, resumes, job descriptions, applications, and AI analyses
-- Seeded sample application data
-- Responsive dashboard shell with reusable UI components
-- Analytics charts for application progress and response trend
+Every signed-in user sees only their own data. New accounts start with an empty dashboard.
 
-## Project structure
+## Supabase setup
 
-```text
-ai-internship-copilot/
-├── backend/
-│   └── app/
-│       ├── api/routes/
-│       ├── core/
-│       ├── db/
-│       ├── models/
-│       └── schemas/
-├── database/
-│   └── init.sql
-├── frontend/
-│   ├── app/
-│   ├── components/
-│   └── lib/
-├── .env.example
-└── docker-compose.yml
-```
-
-## Setup
-
-1. Copy the example environment file:
+1. Create a new Supabase project.
+2. In the Supabase SQL editor, run [`supabase/schema.sql`](./supabase/schema.sql).
+3. In Supabase Auth settings, enable email/password sign up and sign in.
+4. Copy the frontend env example:
 
    ```bash
-   cp .env.example .env
+   cp frontend/.env.example frontend/.env
    ```
 
-2. Start the stack:
+5. Fill in `frontend/.env` with your project values:
 
    ```bash
-   docker compose up --build
+   VITE_SUPABASE_URL=https://your-project-ref.supabase.co
+   VITE_SUPABASE_ANON_KEY=your-supabase-anon-key
    ```
 
-3. Open:
+## Run locally
 
-   - Frontend: `http://localhost:5173`
-   - Backend docs: `http://localhost:8000/docs`
-   - Backend health check: `http://localhost:8000/health`
+1. Install frontend dependencies:
 
-## API endpoints
+   ```bash
+   cd frontend
+   npm install
+   ```
 
-- `POST /api/auth/register`
-- `POST /api/auth/login`
-- `GET /api/auth/me`
-- `GET /api/dashboard/summary`
+2. Start the app:
 
-## Environment variables
+   ```bash
+   npm run dev
+   ```
 
-See `.env.example` for all required values.
+3. Open the Vite URL shown in the terminal.
 
-Outreach Draft generation runs locally in the frontend and does not require an OpenAI API key.
-The Vite frontend only needs `VITE_API_URL` for the other backend calls.
+## Vercel deployment
 
-## Seed data
+1. Push the repo to GitHub.
+2. Import the repository in Vercel.
+3. Set the project root to `frontend`.
+4. Add these environment variables in Vercel:
 
-The database starts with:
+   - `VITE_SUPABASE_URL`
+   - `VITE_SUPABASE_ANON_KEY`
 
-- demo user: `demo@example.com`
-- demo password: `demo-password`
-- five sample applications across all supported statuses
+5. Keep the included [`vercel.json`](./vercel.json) so `/auth` and `/app` routes resolve correctly on refresh.
 
-## Next implementation slice
+## Data model
 
-- Connect auth forms to the backend
-- Add resume PDF upload
-- Add application CRUD
-- Add OpenAI-backed job analysis endpoints
-- Replace dashboard sample data with live API responses
+The schema creates:
+
+- `applications`
+- `resumes`
+
+Both tables include `user_id`, timestamps, and row-level security policies that only allow the authenticated owner to read or write their rows.
+
+## Features
+
+- Sign up, log in, and log out with Supabase auth
+- Protected dashboard access
+- Create, edit, and delete internship applications
+- Upload resume metadata and delete saved resumes
+- Empty-state screens for new accounts
+- Dark mode and responsive UI
+- Frontend-local AI tools remain available
+

@@ -1,22 +1,38 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, type ReactNode, useEffect, useMemo, useState } from "react";
 
-import { applications as seedApplications, weeklyResponseData } from "./lib/sample-data";
 import {
-  generateOutreachDraft,
-  type OutreachMessageType,
-  type OutreachTone,
-} from "./lib/outreach";
-import type { Application, ApplicationStatus } from "./lib/types";
+  createApplication,
+  createResume,
+  deleteApplication as deleteApplicationRow,
+  deleteResume as deleteResumeRow,
+  loadApplications,
+  loadResumes,
+  updateApplication,
+} from "./lib/db";
+import { generateOutreachDraft, type OutreachMessageType, type OutreachTone } from "./lib/outreach";
+import { supabase, supabaseConfigured } from "./lib/supabase";
+import type { ApplicationRecord, ApplicationStatus, ResumeRecord } from "./lib/types";
 
 type View = "Dashboard" | "Resume Lab" | "AI Tools" | "Analytics";
 type Modal = "resume" | "application" | null;
+type ThemeMode = "light" | "dark";
+type AuthMode = "login" | "signup";
 
-type Resume = {
-  id: number;
-  name: string;
-  targetRole: string;
-  updatedOn: string;
-  score: number;
+type SessionUser = {
+  id: string;
+  email: string;
+};
+
+type AuthResult = {
+  status: "signed-in" | "verification-needed";
+};
+
+type ApplicationFormState = {
+  companyName: string;
+  roleTitle: string;
+  status: ApplicationStatus;
+  appliedOn: string;
+  location: string;
 };
 
 type CritiqueResult = {
@@ -34,33 +50,14 @@ type MatchResult = {
   improvements: string[];
 };
 
-type ThemeMode = "light" | "dark";
-
-const LOCAL_STORAGE_KEYS = {
-  applications: "ai-copilot-applications",
-  resumes: "ai-copilot-resumes",
-  theme: "ai-copilot-theme",
-} as const;
-
-const initialResumes: Resume[] = [
-  {
-    id: 1,
-    name: "software-engineering-intern.pdf",
-    targetRole: "Software Engineering Intern",
-    updatedOn: "2026-05-14",
-    score: 91,
-  },
-  {
-    id: 2,
-    name: "backend-focused-resume.pdf",
-    targetRole: "Backend Engineering Intern",
-    updatedOn: "2026-05-09",
-    score: 86,
-  },
-];
+type AuthSnapshot = {
+  email: string;
+  password: string;
+};
 
 const navItems: View[] = ["Dashboard", "Resume Lab", "AI Tools", "Analytics"];
 const statuses: ApplicationStatus[] = ["Applied", "OA", "Interview", "Rejected", "Offer"];
+const respondToStatuses: ApplicationStatus[] = ["OA", "Interview", "Offer"];
 const skillBank = [
   "react",
   "typescript",
@@ -79,70 +76,479 @@ const skillBank = [
   "leadership",
 ];
 
+function formatToday() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function normalizeRoute(pathname: string) {
+  return pathname.startsWith("/auth") ? "/auth" : "/app";
+}
+
+function navigate(pathname: string, replace = false) {
+  if (typeof window === "undefined") return;
+
+  const route = normalizeRoute(pathname);
+  if (replace) {
+    window.history.replaceState({}, "", route);
+  } else {
+    window.history.pushState({}, "", route);
+  }
+}
+
+function estimateResumeScore(fileName: string, targetRole: string) {
+  const base = 74;
+  const fileBonus = Math.min(10, Math.floor(fileName.length / 6));
+  const roleBonus = Math.min(12, Math.floor(targetRole.length / 5));
+  return Math.min(96, base + fileBonus + roleBonus);
+}
+
+function weekStartLabel(date: Date) {
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+function startOfWeek(date: Date) {
+  const copy = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  const day = copy.getUTCDay();
+  const diff = (day + 6) % 7;
+  copy.setUTCDate(copy.getUTCDate() - diff);
+  return copy;
+}
+
+function readTheme(): ThemeMode {
+  if (typeof window === "undefined") return "light";
+  const value = window.localStorage.getItem("ai-copilot-theme");
+  return value === "dark" ? "dark" : "light";
+}
+
+function buildTrendData(applications: ApplicationRecord[]) {
+  const weeks = Array.from({ length: 4 }, (_, index) => {
+    const date = new Date();
+    date.setDate(date.getDate() - index * 7);
+    return startOfWeek(date);
+  }).reverse();
+
+  return weeks.map((weekStart) => {
+    const weekEnd = new Date(weekStart);
+    weekEnd.setUTCDate(weekEnd.getUTCDate() + 7);
+
+    const weekApplications = applications.filter((application) => {
+      const createdAt = new Date(application.createdAt);
+      return createdAt >= weekStart && createdAt < weekEnd;
+    });
+
+    const responses = weekApplications.filter((application) => respondToStatuses.includes(application.status)).length;
+
+    return {
+      week: weekStartLabel(weekStart),
+      applications: weekApplications.length,
+      responses,
+    };
+  });
+}
+
 function toPolyline(values: number[]) {
-  const maxValue = Math.max(...values);
+  const maxValue = Math.max(...values, 1);
 
   return values
     .map((value, index) => {
-      const x = (index / (values.length - 1)) * 100;
+      const x = values.length === 1 ? 0 : (index / (values.length - 1)) * 100;
       const y = 100 - (value / maxValue) * 100;
       return `${x},${y}`;
     })
     .join(" ");
 }
 
-function formatToday() {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function readStoredState<T>(key: string, fallback: T): T {
-  if (typeof window === "undefined") return fallback;
-
-  const raw = window.localStorage.getItem(key);
-  if (!raw) return fallback;
-
-  try {
-    return JSON.parse(raw) as T;
-  } catch {
-    return fallback;
-  }
-}
-
 export function App() {
-  const [view, setView] = useState<View>("Dashboard");
-  const [modal, setModal] = useState<Modal>(null);
-  const [theme, setTheme] = useState<ThemeMode>(() => {
-    if (typeof window === "undefined") return "light";
-    const savedTheme = window.localStorage.getItem(LOCAL_STORAGE_KEYS.theme);
-    return savedTheme === "dark" ? "dark" : "light";
-  });
-  const [applications, setApplications] = useState<Application[]>(() =>
-    readStoredState<Application[]>(LOCAL_STORAGE_KEYS.applications, seedApplications),
-  );
-  const [resumes, setResumes] = useState<Resume[]>(() =>
-    readStoredState<Resume[]>(LOCAL_STORAGE_KEYS.resumes, initialResumes),
-  );
-  const [selectedResumeFile, setSelectedResumeFile] = useState<File | null>(null);
+  const [theme, setTheme] = useState<ThemeMode>(readTheme);
+  const [session, setSession] = useState<SessionUser | null>(null);
+  const [authBooting, setAuthBooting] = useState(true);
+  const [applications, setApplications] = useState<ApplicationRecord[]>([]);
+  const [resumes, setResumes] = useState<ResumeRecord[]>([]);
+  const [loadingData, setLoadingData] = useState(false);
+  const [workspaceError, setWorkspaceError] = useState("");
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
-    window.localStorage.setItem(LOCAL_STORAGE_KEYS.theme, theme);
+    window.localStorage.setItem("ai-copilot-theme", theme);
   }, [theme]);
 
   useEffect(() => {
-    window.localStorage.setItem(LOCAL_STORAGE_KEYS.applications, JSON.stringify(applications));
-  }, [applications]);
+    if (!supabase) {
+      setAuthBooting(false);
+      return;
+    }
+
+    let active = true;
+
+    supabase.auth.getSession().then(({ data }) => {
+      if (!active) return;
+      setSession(data.session ? mapSession(data.session.user.id, data.session.user.email ?? null) : null);
+      setAuthBooting(false);
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      if (!active) return;
+      setSession(nextSession ? mapSession(nextSession.user.id, nextSession.user.email ?? null) : null);
+      setAuthBooting(false);
+    });
+
+    return () => {
+      active = false;
+      subscription.unsubscribe();
+    };
+  }, []);
 
   useEffect(() => {
-    window.localStorage.setItem(LOCAL_STORAGE_KEYS.resumes, JSON.stringify(resumes));
-  }, [resumes]);
+    const onPopState = () => {
+      navigate(normalizeRoute(window.location.pathname), true);
+    };
+
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
+
+  useEffect(() => {
+    if (authBooting) return;
+
+    if (session) {
+      navigate("/app", true);
+    } else {
+      navigate("/auth", true);
+      setApplications([]);
+      setResumes([]);
+      setLoadingData(false);
+      setWorkspaceError("");
+    }
+  }, [authBooting, session]);
+
+  useEffect(() => {
+    if (!supabase || !session) return;
+
+    let active = true;
+    setLoadingData(true);
+    setWorkspaceError("");
+
+    Promise.all([loadApplications(session.id), loadResumes(session.id)])
+      .then(([applicationRows, resumeRows]) => {
+        if (!active) return;
+        setApplications(applicationRows);
+        setResumes(resumeRows);
+      })
+      .catch((error) => {
+        if (!active) return;
+        setWorkspaceError(error instanceof Error ? error.message : "Failed to load your data.");
+      })
+      .finally(() => {
+        if (active) setLoadingData(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [session]);
+
+  useEffect(() => {
+    if (!supabase || !session) return;
+
+    const channel = supabase
+      .channel(`workspace-sync-${session.id}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "applications", filter: `user_id=eq.${session.id}` },
+        () => {
+          loadApplications(session.id).then(setApplications).catch(() => undefined);
+        },
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "resumes", filter: `user_id=eq.${session.id}` },
+        () => {
+          loadResumes(session.id).then(setResumes).catch(() => undefined);
+        },
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [session]);
+
+  async function handleAuthenticate(mode: AuthMode, email: string, password: string): Promise<AuthResult> {
+    if (!supabase) {
+      throw new Error("Supabase is not configured.");
+    }
+
+    if (mode === "signup") {
+      const { data, error } = await supabase.auth.signUp({ email, password });
+      if (error) throw error;
+      if (data.session?.user) {
+        setSession(mapSession(data.session.user.id, data.session.user.email));
+        return { status: "signed-in" };
+      }
+      return { status: "verification-needed" };
+    }
+
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) throw error;
+    if (!data.session?.user) {
+      throw new Error("Login succeeded but no session was returned.");
+    }
+
+    setSession(mapSession(data.session.user.id, data.session.user.email));
+    return { status: "signed-in" };
+  }
+
+  async function handleSignOut() {
+    if (supabase) {
+      await supabase.auth.signOut();
+    }
+    setSession(null);
+    setApplications([]);
+    setResumes([]);
+    navigate("/auth", true);
+  }
+
+  async function handleCreateApplication(form: ApplicationFormState) {
+    if (!session) throw new Error("Not signed in.");
+    const created = await createApplication(session.id, {
+      company_name: form.companyName,
+      role_title: form.roleTitle,
+      status: form.status,
+      applied_on: form.appliedOn,
+      location: form.location,
+    });
+    setApplications((current) => [created, ...current]);
+    return created;
+  }
+
+  async function handleUpdateApplication(id: string, form: ApplicationFormState) {
+    if (!session) throw new Error("Not signed in.");
+    const updated = await updateApplication(session.id, id, {
+      company_name: form.companyName,
+      role_title: form.roleTitle,
+      status: form.status,
+      applied_on: form.appliedOn,
+      location: form.location,
+    });
+    setApplications((current) => current.map((application) => (application.id === id ? updated : application)));
+    return updated;
+  }
+
+  async function handleDeleteApplication(id: string) {
+    if (!session) throw new Error("Not signed in.");
+    await deleteApplicationRow(session.id, id);
+    setApplications((current) => current.filter((application) => application.id !== id));
+  }
+
+  async function handleCreateResume(fileName: string, targetRole: string) {
+    if (!session) throw new Error("Not signed in.");
+    const created = await createResume(session.id, {
+      file_name: fileName,
+      target_role: targetRole,
+      score: estimateResumeScore(fileName, targetRole),
+    });
+    setResumes((current) => [created, ...current]);
+    return created;
+  }
+
+  async function handleDeleteResume(id: string) {
+    if (!session) throw new Error("Not signed in.");
+    await deleteResumeRow(session.id, id);
+    setResumes((current) => current.filter((resume) => resume.id !== id));
+  }
+
+  if (!supabaseConfigured || !supabase) {
+    return (
+      <ConfigScreen
+        title="Supabase setup required"
+        message="Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to frontend/.env before running the app."
+      />
+    );
+  }
+
+  if (authBooting) {
+    return <BootScreen />;
+  }
+
+  if (!session) {
+    return <AuthScreen onAuthenticate={handleAuthenticate} />;
+  }
+
+  return (
+    <Workspace
+      applications={applications}
+      dataError={workspaceError}
+      loadingData={loadingData}
+      onCreateApplication={handleCreateApplication}
+      onCreateResume={handleCreateResume}
+      onDeleteApplication={handleDeleteApplication}
+      onDeleteResume={handleDeleteResume}
+      onSignOut={handleSignOut}
+      onUpdateApplication={handleUpdateApplication}
+      resumes={resumes}
+      session={session}
+      theme={theme}
+      onToggleTheme={() => setTheme((current) => (current === "light" ? "dark" : "light"))}
+    />
+  );
+}
+
+function mapSession(id: string, email: string | null | undefined) {
+  return {
+    id,
+    email: email ?? "",
+  };
+}
+
+function AuthScreen({ onAuthenticate }: { onAuthenticate: (mode: AuthMode, email: string, password: string) => Promise<AuthResult> }) {
+  const [mode, setMode] = useState<AuthMode>("login");
+  const [snapshot, setSnapshot] = useState<AuthSnapshot>({ email: "", password: "" });
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    setNotice("");
+
+    if (mode === "signup" && snapshot.password !== confirmPassword) {
+      setError("Passwords do not match.");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const result = await onAuthenticate(mode, snapshot.email.trim(), snapshot.password);
+      if (result.status === "verification-needed") {
+        setNotice("Check your inbox to confirm your account, then log in.");
+      }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Authentication failed.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <main className="auth-shell">
+      <section className="auth-panel panel">
+        <div>
+          <p className="eyebrow">AI Internship</p>
+          <h1>Copilot</h1>
+          <p className="muted">
+            Private internship tracker with Supabase auth and per-user data sync.
+          </p>
+        </div>
+
+        <div className="tool-tabs panel auth-tabs">
+          <button className={mode === "login" ? "active" : ""} onClick={() => setMode("login")} type="button">
+            Log in
+          </button>
+          <button className={mode === "signup" ? "active" : ""} onClick={() => setMode("signup")} type="button">
+            Sign up
+          </button>
+        </div>
+
+        <form className="form-grid" onSubmit={submit}>
+          <label>
+            Email
+            <input
+              autoComplete="email"
+              onChange={(event) => setSnapshot((current) => ({ ...current, email: event.currentTarget.value }))}
+              placeholder="you@example.com"
+              required
+              type="email"
+              value={snapshot.email}
+            />
+          </label>
+          <label>
+            Password
+            <input
+              autoComplete={mode === "login" ? "current-password" : "new-password"}
+              onChange={(event) => setSnapshot((current) => ({ ...current, password: event.currentTarget.value }))}
+              placeholder="••••••••"
+              required
+              type="password"
+              value={snapshot.password}
+            />
+          </label>
+          {mode === "signup" && (
+            <label>
+              Confirm password
+              <input
+                autoComplete="new-password"
+                onChange={(event) => setConfirmPassword(event.currentTarget.value)}
+                placeholder="••••••••"
+                required
+                type="password"
+                value={confirmPassword}
+              />
+            </label>
+          )}
+          {error && <p className="error-text">{error}</p>}
+          {notice && <p className="success-text">{notice}</p>}
+          <button className="button primary" disabled={loading}>
+            {loading ? "Working..." : mode === "login" ? "Log in" : "Create account"}
+          </button>
+        </form>
+      </section>
+    </main>
+  );
+}
+
+function Workspace({
+  applications,
+  dataError,
+  loadingData,
+  onCreateApplication,
+  onCreateResume,
+  onDeleteApplication,
+  onDeleteResume,
+  onSignOut,
+  onUpdateApplication,
+  resumes,
+  session,
+  theme,
+  onToggleTheme,
+}: {
+  applications: ApplicationRecord[];
+  dataError: string;
+  loadingData: boolean;
+  onCreateApplication: (form: ApplicationFormState) => Promise<ApplicationRecord>;
+  onCreateResume: (fileName: string, targetRole: string) => Promise<ResumeRecord>;
+  onDeleteApplication: (id: string) => Promise<void>;
+  onDeleteResume: (id: string) => Promise<void>;
+  onSignOut: () => Promise<void>;
+  onUpdateApplication: (id: string, form: ApplicationFormState) => Promise<ApplicationRecord>;
+  resumes: ResumeRecord[];
+  session: SessionUser;
+  theme: ThemeMode;
+  onToggleTheme: () => void;
+}) {
+  const [view, setView] = useState<View>("Dashboard");
+  const [modal, setModal] = useState<Modal>(null);
+  const [applicationForm, setApplicationForm] = useState<ApplicationFormState>({
+    companyName: "",
+    roleTitle: "",
+    status: "Applied",
+    appliedOn: formatToday(),
+    location: "",
+  });
+  const [editingApplicationId, setEditingApplicationId] = useState<string | null>(null);
+  const [selectedResumeFile, setSelectedResumeFile] = useState<File | null>(null);
+  const [resumeTargetRole, setResumeTargetRole] = useState("");
+  const [savingApplication, setSavingApplication] = useState(false);
+  const [savingResume, setSavingResume] = useState(false);
+  const [actionError, setActionError] = useState("");
 
   const summary = useMemo(() => {
     const interviews = applications.filter((application) => application.status === "Interview").length;
     const offers = applications.filter((application) => application.status === "Offer").length;
-    const responses = applications.filter((application) =>
-      ["OA", "Interview", "Offer"].includes(application.status),
-    ).length;
+    const responses = applications.filter((application) => respondToStatuses.includes(application.status)).length;
     const responseRate = applications.length
       ? `${((responses / applications.length) * 100).toFixed(1)}%`
       : "0.0%";
@@ -159,62 +565,109 @@ export function App() {
     status,
     count: applications.filter((application) => application.status === status).length,
   }));
+  const trendData = useMemo(() => buildTrendData(applications), [applications]);
   const maxProgress = Math.max(...progressData.map((item) => item.count), 1);
 
-  function addResume(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const data = new FormData(event.currentTarget);
-    const targetRole = String(data.get("targetRole"));
-
-    if (!selectedResumeFile) return;
-
-    setResumes((current) => [
-      {
-        id: Date.now(),
-        name: selectedResumeFile.name,
-        targetRole,
-        updatedOn: formatToday(),
-        score: 88,
-      },
-      ...current,
-    ]);
-    setSelectedResumeFile(null);
-    setModal(null);
-    setView("Resume Lab");
+  function openNewApplicationModal() {
+    setActionError("");
+    setEditingApplicationId(null);
+    setApplicationForm({
+      companyName: "",
+      roleTitle: "",
+      status: "Applied",
+      appliedOn: formatToday(),
+      location: "",
+    });
+    setModal("application");
   }
 
-  function deleteResume(id: number) {
-    if (!window.confirm("Delete this resume?")) return;
-    setResumes((current) => current.filter((resume) => resume.id !== id));
+  function closeApplicationModal() {
+    setModal(null);
+    setEditingApplicationId(null);
+    setActionError("");
   }
 
   function closeResumeModal() {
+    setModal(null);
     setSelectedResumeFile(null);
-    setModal(null);
+    setResumeTargetRole("");
+    setActionError("");
   }
 
-  function addApplication(event: FormEvent<HTMLFormElement>) {
+  function openEditApplicationModal(application: ApplicationRecord) {
+    setActionError("");
+    setEditingApplicationId(application.id);
+    setApplicationForm({
+      companyName: application.companyName,
+      roleTitle: application.roleTitle,
+      status: application.status,
+      appliedOn: application.appliedOn,
+      location: application.location,
+    });
+    setModal("application");
+  }
+
+  async function submitApplicationForm(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const data = new FormData(event.currentTarget);
+    setActionError("");
+    setSavingApplication(true);
 
-    setApplications((current) => [
-      {
-        id: Date.now(),
-        companyName: String(data.get("companyName")),
-        roleTitle: String(data.get("roleTitle")),
-        status: data.get("status") as ApplicationStatus,
-        appliedOn: String(data.get("appliedOn")),
-        location: String(data.get("location")),
-      },
-      ...current,
-    ]);
-    setModal(null);
-    setView("Dashboard");
+    try {
+      if (editingApplicationId) {
+        await onUpdateApplication(editingApplicationId, applicationForm);
+      } else {
+        await onCreateApplication(applicationForm);
+      }
+      setView("Dashboard");
+      setModal(null);
+    } catch (caught) {
+      setActionError(caught instanceof Error ? caught.message : "Unable to save the application.");
+    } finally {
+      setSavingApplication(false);
+    }
   }
 
-  function deleteApplication(id: number) {
+  async function submitResumeForm(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setActionError("");
+
+    if (!selectedResumeFile) {
+      setActionError("Choose a PDF before saving.");
+      return;
+    }
+
+    setSavingResume(true);
+    try {
+      await onCreateResume(selectedResumeFile.name, resumeTargetRole.trim() || "General");
+      setSelectedResumeFile(null);
+      setResumeTargetRole("");
+      setModal(null);
+      setView("Resume Lab");
+    } catch (caught) {
+      setActionError(caught instanceof Error ? caught.message : "Unable to save the resume.");
+    } finally {
+      setSavingResume(false);
+    }
+  }
+
+  async function deleteApplication(applicationId: string) {
     if (!window.confirm("Delete this internship application?")) return;
-    setApplications((current) => current.filter((application) => application.id !== id));
+    setActionError("");
+    try {
+      await onDeleteApplication(applicationId);
+    } catch (caught) {
+      setActionError(caught instanceof Error ? caught.message : "Unable to delete the application.");
+    }
+  }
+
+  async function deleteResume(resumeId: string) {
+    if (!window.confirm("Delete this resume?")) return;
+    setActionError("");
+    try {
+      await onDeleteResume(resumeId);
+    } catch (caught) {
+      setActionError(caught instanceof Error ? caught.message : "Unable to delete the resume.");
+    }
   }
 
   return (
@@ -225,11 +678,7 @@ export function App() {
         <h1>Copilot</h1>
         <nav>
           {navItems.map((item) => (
-            <button
-              className={item === view ? "active" : ""}
-              key={item}
-              onClick={() => setView(item)}
-            >
+            <button className={item === view ? "active" : ""} key={item} onClick={() => setView(item)}>
               {item}
             </button>
           ))}
@@ -239,47 +688,72 @@ export function App() {
       <section className="content">
         <header className="topbar">
           <div>
-            <p className="eyebrow">Welcome back</p>
+            <p className="eyebrow">{session.email}</p>
             <h2>{view}</h2>
           </div>
           <div className="actions">
-            <button className="button ghost" onClick={() => setTheme((current) => (current === "light" ? "dark" : "light"))}>
+            <button className="button ghost" onClick={onToggleTheme} type="button">
               {theme === "light" ? "Dark mode" : "Light mode"}
             </button>
-            <button className="button secondary" onClick={() => setModal("resume")}>
-              Upload Resume
-            </button>
-            <button className="button primary" onClick={() => setModal("application")}>
+            <button className="button secondary" onClick={openNewApplicationModal} type="button">
               New Application
+            </button>
+            <button className="button primary" onClick={onSignOut} type="button">
+              Log out
             </button>
           </div>
         </header>
 
-        {view === "Dashboard" && (
-          <DashboardView
-            applications={applications}
-            onDeleteApplication={deleteApplication}
-            progressData={progressData}
-            summary={summary}
-          />
-        )}
-        {view === "Resume Lab" && (
-          <ResumeLab resumes={resumes} onDeleteResume={deleteResume} onUpload={() => setModal("resume")} />
-        )}
-        {view === "AI Tools" && <AiTools />}
-        {view === "Analytics" && (
-          <AnalyticsView applications={applications} progressData={progressData} maxProgress={maxProgress} />
+        {dataError && <section className="panel error-banner">{dataError}</section>}
+        {actionError && <section className="panel error-banner">{actionError}</section>}
+
+        {loadingData ? (
+          <div className="dashboard-body">
+            <LoadingPanel label="Loading your private workspace" />
+          </div>
+        ) : (
+          <>
+            {view === "Dashboard" && (
+              <DashboardView
+                applications={applications}
+                onAddApplication={openNewApplicationModal}
+                onDeleteApplication={deleteApplication}
+                onEditApplication={openEditApplicationModal}
+                progressData={progressData}
+                summary={summary}
+                trendData={trendData}
+              />
+            )}
+            {view === "Resume Lab" && (
+              <ResumeLab
+                onDeleteResume={deleteResume}
+                onOpenUpload={() => {
+                  setActionError("");
+                  setModal("resume");
+                }}
+                resumes={resumes}
+              />
+            )}
+            {view === "AI Tools" && <AiTools />}
+            {view === "Analytics" && (
+              <AnalyticsView
+                applications={applications}
+                onAddApplication={openNewApplicationModal}
+                progressData={progressData}
+                trendData={trendData}
+              />
+            )}
+          </>
         )}
       </section>
 
       {modal === "resume" && (
         <Dialog title="Upload Resume" onClose={closeResumeModal}>
-          <form className="form-grid" onSubmit={addResume}>
+          <form className="form-grid" onSubmit={submitResumeForm}>
             <label className="file-field">
               Resume PDF
               <input
                 accept="application/pdf,.pdf"
-                name="resumeFile"
                 onChange={(event) => setSelectedResumeFile(event.currentTarget.files?.[0] ?? null)}
                 required
                 type="file"
@@ -290,14 +764,19 @@ export function App() {
             </label>
             <label>
               Target role
-              <input name="targetRole" placeholder="Software Engineering Intern" required />
+              <input
+                onChange={(event) => setResumeTargetRole(event.currentTarget.value)}
+                placeholder="Software Engineering Intern"
+                required
+                value={resumeTargetRole}
+              />
             </label>
             <div className="dialog-actions">
               <button className="button ghost" type="button" onClick={closeResumeModal}>
                 Cancel
               </button>
-              <button className="button primary" disabled={!selectedResumeFile}>
-                Save Resume
+              <button className="button primary" disabled={savingResume || !selectedResumeFile}>
+                {savingResume ? "Saving..." : "Save Resume"}
               </button>
             </div>
           </form>
@@ -305,19 +784,41 @@ export function App() {
       )}
 
       {modal === "application" && (
-        <Dialog title="New Application" onClose={() => setModal(null)}>
-          <form className="form-grid" onSubmit={addApplication}>
+        <Dialog title={editingApplicationId ? "Edit Application" : "New Application"} onClose={closeApplicationModal}>
+          <form className="form-grid" onSubmit={submitApplicationForm}>
             <label>
               Company
-              <input name="companyName" placeholder="Anthropic" required />
+              <input
+                onChange={(event) =>
+                  setApplicationForm((current) => ({ ...current, companyName: event.currentTarget.value }))
+                }
+                placeholder="Anthropic"
+                required
+                value={applicationForm.companyName}
+              />
             </label>
             <label>
               Role
-              <input name="roleTitle" placeholder="Product Engineering Intern" required />
+              <input
+                onChange={(event) =>
+                  setApplicationForm((current) => ({ ...current, roleTitle: event.currentTarget.value }))
+                }
+                placeholder="Product Engineering Intern"
+                required
+                value={applicationForm.roleTitle}
+              />
             </label>
             <label>
               Status
-              <select name="status" defaultValue="Applied">
+              <select
+                onChange={(event) =>
+                  setApplicationForm((current) => ({
+                    ...current,
+                    status: event.currentTarget.value as ApplicationStatus,
+                  }))
+                }
+                value={applicationForm.status}
+              >
                 {statuses.map((status) => (
                   <option key={status}>{status}</option>
                 ))}
@@ -325,17 +826,33 @@ export function App() {
             </label>
             <label>
               Applied on
-              <input name="appliedOn" type="date" defaultValue={formatToday()} required />
+              <input
+                onChange={(event) =>
+                  setApplicationForm((current) => ({ ...current, appliedOn: event.currentTarget.value }))
+                }
+                type="date"
+                value={applicationForm.appliedOn}
+                required
+              />
             </label>
             <label>
               Location
-              <input name="location" placeholder="Remote" required />
+              <input
+                onChange={(event) =>
+                  setApplicationForm((current) => ({ ...current, location: event.currentTarget.value }))
+                }
+                placeholder="Remote"
+                required
+                value={applicationForm.location}
+              />
             </label>
             <div className="dialog-actions">
-              <button className="button ghost" type="button" onClick={() => setModal(null)}>
+              <button className="button ghost" type="button" onClick={closeApplicationModal}>
                 Cancel
               </button>
-              <button className="button primary">Add Application</button>
+              <button className="button primary" disabled={savingApplication}>
+                {savingApplication ? "Saving..." : editingApplicationId ? "Save Changes" : "Add Application"}
+              </button>
             </div>
           </form>
         </Dialog>
@@ -346,23 +863,38 @@ export function App() {
 
 function DashboardView({
   applications,
+  onAddApplication,
   onDeleteApplication,
+  onEditApplication,
   progressData,
   summary,
+  trendData,
 }: {
-  applications: Application[];
-  onDeleteApplication: (id: number) => void;
+  applications: ApplicationRecord[];
+  onAddApplication: () => void;
+  onDeleteApplication: (id: string) => void;
+  onEditApplication: (application: ApplicationRecord) => void;
   progressData: { status: ApplicationStatus; count: number }[];
   summary: { applications: number; responseRate: string; interviews: number; offers: number };
+  trendData: { week: string; applications: number; responses: number }[];
 }) {
   const maxProgress = Math.max(...progressData.map((item) => item.count), 1);
 
   return (
     <div className="dashboard-body">
+      {applications.length === 0 && (
+        <EmptyStateCard
+          actionLabel="Add your first application"
+          description="Your dashboard starts empty. Add internships to track progress, analytics, and activity per account."
+          title="No internship applications yet"
+          onAction={onAddApplication}
+        />
+      )}
+
       <div className="stats-grid">
         {[
           ["Applications", summary.applications, "+ active pipeline"],
-          ["Response Rate", summary.responseRate, "from mock responses"],
+          ["Response Rate", summary.responseRate, "from your current data"],
           ["Interviews", summary.interviews, "currently in process"],
           ["Offers", summary.offers, "decisions to review"],
         ].map(([label, value, detail]) => (
@@ -376,22 +908,26 @@ function DashboardView({
 
       <div className="analytics-grid">
         <ProgressPanel maxProgress={maxProgress} progressData={progressData} />
-        <TrendPanel />
+        <TrendPanel trendData={trendData} />
       </div>
 
-      <ApplicationsTable applications={applications} onDeleteApplication={onDeleteApplication} />
+      <ApplicationsTable
+        applications={applications}
+        onDeleteApplication={onDeleteApplication}
+        onEditApplication={onEditApplication}
+      />
     </div>
   );
 }
 
 function ResumeLab({
-  resumes,
   onDeleteResume,
-  onUpload,
+  onOpenUpload,
+  resumes,
 }: {
-  resumes: Resume[];
-  onDeleteResume: (id: number) => void;
-  onUpload: () => void;
+  onDeleteResume: (id: string) => void;
+  onOpenUpload: () => void;
+  resumes: ResumeRecord[];
 }) {
   return (
     <div className="dashboard-body">
@@ -400,43 +936,50 @@ function ResumeLab({
           <p className="eyebrow">Resume Lab</p>
           <h3>Tailor each version before you apply.</h3>
           <p className="muted">
-            Store role-specific resumes, compare match scores, and keep recent versions close at hand.
+            Store resume metadata per account. Every user sees only their own saved items.
           </p>
         </div>
-        <button className="button primary" onClick={onUpload}>
+        <button className="button primary" onClick={onOpenUpload} type="button">
           Upload Resume
         </button>
       </section>
 
-      <div className="resume-grid">
-        {resumes.map((resume) => (
-          <section className="panel resume-card" key={resume.id}>
-            <button
-              aria-label={`Delete resume ${resume.name}`}
-              className="icon-button danger resume-delete"
-              onClick={() => onDeleteResume(resume.id)}
-              type="button"
-            >
-              <TrashIcon />
-            </button>
-            <div>
-              <p className="eyebrow">Match score</p>
-              <strong>{resume.score}%</strong>
-            </div>
-            <h3>{resume.name}</h3>
-            <p>{resume.targetRole}</p>
-            <span>Updated {resume.updatedOn}</span>
-          </section>
-        ))}
-      </div>
+      {resumes.length === 0 ? (
+        <EmptyStateCard
+          actionLabel="Upload a resume"
+          description="Upload a PDF to save metadata like filename and target role to your account."
+          title="No resumes saved yet"
+          onAction={onOpenUpload}
+        />
+      ) : (
+        <div className="resume-grid">
+          {resumes.map((resume) => (
+            <section className="panel resume-card" key={resume.id}>
+              <button
+                aria-label={`Delete resume ${resume.fileName}`}
+                className="icon-button danger resume-delete"
+                onClick={() => onDeleteResume(resume.id)}
+                type="button"
+              >
+                <TrashIcon />
+              </button>
+              <div>
+                <p className="eyebrow">Resume score</p>
+                <strong>{resume.score}%</strong>
+              </div>
+              <h3>{resume.fileName}</h3>
+              <p>{resume.targetRole}</p>
+              <span>Updated {new Date(resume.updatedAt).toLocaleDateString()}</span>
+            </section>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
 function AiTools() {
-  const [activeTool, setActiveTool] = useState<"Resume Critique" | "JD Match" | "Outreach Draft">(
-    "Resume Critique",
-  );
+  const [activeTool, setActiveTool] = useState<"Resume Critique" | "JD Match" | "Outreach Draft">("Resume Critique");
   const [critiqueFile, setCritiqueFile] = useState<File | null>(null);
   const [critiqueLoading, setCritiqueLoading] = useState(false);
   const [critique, setCritique] = useState<CritiqueResult | null>(null);
@@ -485,14 +1028,7 @@ function AiTools() {
           "Quantify latency, conversion, accuracy, or time saved in each project.",
           "Add scale indicators such as records processed, users served, or APIs shipped.",
         ],
-        keywordSuggestions: [
-          "React",
-          "TypeScript",
-          "REST APIs",
-          "SQL",
-          "Testing",
-          "Cloud deployment",
-        ],
+        keywordSuggestions: ["React", "TypeScript", "REST APIs", "SQL", "Testing", "Cloud deployment"],
       });
       setCritiqueLoading(false);
     }, 850);
@@ -614,7 +1150,7 @@ function AiTools() {
             <label>
               Job description
               <textarea
-                onChange={(event) => setJobDescription(event.target.value)}
+                onChange={(event) => setJobDescription(event.currentTarget.value)}
                 placeholder="Paste a job description mentioning React, TypeScript, Python, SQL, AWS..."
                 value={jobDescription}
               />
@@ -647,36 +1183,36 @@ function AiTools() {
             <h3>Outreach Draft</h3>
             <label>
               Recruiter name
-              <input value={recruiterName} onChange={(event) => setRecruiterName(event.target.value)} />
+              <input value={recruiterName} onChange={(event) => setRecruiterName(event.currentTarget.value)} />
             </label>
             <label>
               Company
-              <input value={company} onChange={(event) => setCompany(event.target.value)} />
+              <input value={company} onChange={(event) => setCompany(event.currentTarget.value)} />
             </label>
             <label>
               Role
-              <input value={role} onChange={(event) => setRole(event.target.value)} />
+              <input value={role} onChange={(event) => setRole(event.currentTarget.value)} />
             </label>
             <label>
               How I found them
-              <input value={howIFoundThem} onChange={(event) => setHowIFoundThem(event.target.value)} />
+              <input value={howIFoundThem} onChange={(event) => setHowIFoundThem(event.currentTarget.value)} />
             </label>
             <label>
               Background summary
-              <textarea value={backgroundSummary} onChange={(event) => setBackgroundSummary(event.target.value)} />
+              <textarea value={backgroundSummary} onChange={(event) => setBackgroundSummary(event.currentTarget.value)} />
             </label>
             <label>
               Reason for reaching out
               <textarea
                 value={reasonForReachingOut}
-                onChange={(event) => setReasonForReachingOut(event.target.value)}
+                onChange={(event) => setReasonForReachingOut(event.currentTarget.value)}
               />
             </label>
             <label>
               Message type
               <select
                 value={messageType}
-                onChange={(event) => setMessageType(event.target.value as OutreachMessageType)}
+                onChange={(event) => setMessageType(event.currentTarget.value as OutreachMessageType)}
               >
                 <option>LinkedIn</option>
                 <option>Email</option>
@@ -685,7 +1221,7 @@ function AiTools() {
             </label>
             <label>
               Tone
-              <select value={tone} onChange={(event) => setTone(event.target.value as OutreachTone)}>
+              <select value={tone} onChange={(event) => setTone(event.currentTarget.value as OutreachTone)}>
                 <option>Warm</option>
                 <option>Professional</option>
                 <option>Casual</option>
@@ -707,22 +1243,227 @@ function AiTools() {
                 <h3>Recruiter outreach</h3>
               </div>
               <div className="actions">
-                <button className="button secondary" onClick={generateOutreach}>
+                <button className="button secondary" onClick={generateOutreach} type="button">
                   Regenerate
                 </button>
-                <button className="button primary" disabled={!outreachDraft} onClick={copyDraft}>
+                <button className="button primary" disabled={!outreachDraft} onClick={copyDraft} type="button">
                   {copied ? "Copied" : "Copy"}
                 </button>
               </div>
             </div>
-            {!outreachDraft && (
-              <p className="muted">Generate a draft to preview the final message here.</p>
-            )}
+            {!outreachDraft && <p className="muted">Generate a draft to preview the final message here.</p>}
             {outreachDraft && <p>{outreachDraft}</p>}
           </div>
         </section>
       )}
     </div>
+  );
+}
+
+function AnalyticsView({
+  applications,
+  onAddApplication,
+  progressData,
+  trendData,
+}: {
+  applications: ApplicationRecord[];
+  onAddApplication: () => void;
+  progressData: { status: ApplicationStatus; count: number }[];
+  trendData: { week: string; applications: number; responses: number }[];
+}) {
+  const maxProgress = Math.max(...progressData.map((item) => item.count), 1);
+  const hasData = applications.length > 0;
+
+  return (
+    <div className="dashboard-body">
+      {!hasData && (
+        <EmptyStateCard
+          actionLabel="Add an application"
+          description="Analytics fill in automatically as you track internships in your account."
+          title="No activity to analyze yet"
+          onAction={onAddApplication}
+        />
+      )}
+      <div className="analytics-grid">
+        <ProgressPanel maxProgress={maxProgress} progressData={progressData} />
+        <TrendPanel trendData={trendData} />
+      </div>
+      <section className="panel insight-panel">
+        <h3>Pipeline Insights</h3>
+        <p>
+          {hasData
+            ? `${applications.length} applications tracked. Interview conversion is strongest after OA responses, while offers remain concentrated in your most recent activity.`
+            : "Add a few internships to see response patterns, conversion rates, and trend lines."}
+        </p>
+      </section>
+    </div>
+  );
+}
+
+function ProgressPanel({
+  progressData,
+  maxProgress,
+}: {
+  progressData: { status: ApplicationStatus; count: number }[];
+  maxProgress: number;
+}) {
+  return (
+    <section className="panel chart-panel">
+      <h3>Application Progress</h3>
+      <div className="bar-chart">
+        {progressData.map((item) => (
+          <div className="bar-group" key={item.status}>
+            <div className="bar" style={{ height: `${(item.count / maxProgress) * 100}%` }} />
+            <span className="bar-label">{item.status}</span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function TrendPanel({
+  trendData,
+}: {
+  trendData: { week: string; applications: number; responses: number }[];
+}) {
+  const applicationSeries = trendData.map((item) => item.applications);
+  const responseSeries = trendData.map((item) => item.responses);
+
+  return (
+    <section className="panel chart-panel">
+      <h3>Response Rate Trend</h3>
+      <svg className="line-chart" viewBox="0 0 100 100" preserveAspectRatio="none" role="img">
+        <polyline
+          fill="none"
+          points={toPolyline(applicationSeries)}
+          stroke="#17202A"
+          strokeWidth="2"
+          vectorEffect="non-scaling-stroke"
+        />
+        <polyline
+          fill="none"
+          points={toPolyline(responseSeries)}
+          stroke="#0F766E"
+          strokeWidth="2"
+          vectorEffect="non-scaling-stroke"
+        />
+      </svg>
+      <div className="legend">
+        <span>Applications</span>
+        <span>Responses</span>
+      </div>
+      <div className="trend-labels">
+        {trendData.map((item) => (
+          <span key={item.week}>{item.week}</span>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ApplicationsTable({
+  applications,
+  onDeleteApplication,
+  onEditApplication,
+}: {
+  applications: ApplicationRecord[];
+  onDeleteApplication: (id: string) => void;
+  onEditApplication: (application: ApplicationRecord) => void;
+}) {
+  return (
+    <section className="panel table-panel">
+      <h3>Recent Applications</h3>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Company</th>
+              <th>Role</th>
+              <th>Status</th>
+              <th>Applied</th>
+              <th>Location</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {applications.length === 0 ? (
+              <tr>
+                <td colSpan={6}>
+                  <span className="muted">No applications saved yet.</span>
+                </td>
+              </tr>
+            ) : (
+              applications.map((application) => (
+                <tr key={application.id}>
+                  <td>{application.companyName}</td>
+                  <td>{application.roleTitle}</td>
+                  <td>
+                    <span className={`badge ${application.status}`}>{application.status}</span>
+                  </td>
+                  <td>{application.appliedOn}</td>
+                  <td>{application.location}</td>
+                  <td>
+                    <div className="row-actions">
+                      <button
+                        aria-label={`Edit application for ${application.companyName}`}
+                        className="icon-button edit"
+                        onClick={() => onEditApplication(application)}
+                        type="button"
+                      >
+                        <PencilIcon />
+                      </button>
+                      <button
+                        aria-label={`Delete application for ${application.companyName}`}
+                        className="icon-button danger"
+                        onClick={() => onDeleteApplication(application.id)}
+                        type="button"
+                      >
+                        <TrashIcon />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function EmptyStateCard({
+  actionLabel,
+  description,
+  title,
+  onAction,
+}: {
+  actionLabel: string;
+  description: string;
+  title: string;
+  onAction: () => void;
+}) {
+  return (
+    <section className="panel empty-state">
+      <div>
+        <p className="eyebrow">Start here</p>
+        <h3>{title}</h3>
+        <p className="muted">{description}</p>
+      </div>
+      <button className="button primary" onClick={onAction} type="button">
+        {actionLabel}
+      </button>
+    </section>
+  );
+}
+
+function LoadingPanel({ label }: { label: string }) {
+  return (
+    <section className="panel loading-card">
+      <span />
+      <p>{label}</p>
+    </section>
   );
 }
 
@@ -743,15 +1484,6 @@ function FeedbackCard({
           <li key={item}>{item}</li>
         ))}
       </ul>
-    </section>
-  );
-}
-
-function LoadingPanel({ label }: { label: string }) {
-  return (
-    <section className="panel loading-card">
-      <span />
-      <p>{label}</p>
     </section>
   );
 }
@@ -783,139 +1515,12 @@ function TagGroup({
   );
 }
 
-function AnalyticsView({
-  applications,
-  progressData,
-  maxProgress,
-}: {
-  applications: Application[];
-  progressData: { status: ApplicationStatus; count: number }[];
-  maxProgress: number;
-}) {
-  return (
-    <div className="dashboard-body">
-      <div className="analytics-grid">
-        <ProgressPanel maxProgress={maxProgress} progressData={progressData} />
-        <TrendPanel />
-      </div>
-      <section className="panel insight-panel">
-        <h3>Pipeline Insights</h3>
-        <p>
-          {applications.length} applications tracked. Interview conversion is strongest after OA responses,
-          while offers remain concentrated in late-April submissions.
-        </p>
-      </section>
-    </div>
-  );
-}
-
-function ProgressPanel({
-  progressData,
-  maxProgress,
-}: {
-  progressData: { status: ApplicationStatus; count: number }[];
-  maxProgress: number;
-}) {
-  return (
-    <section className="panel chart-panel">
-      <h3>Application Progress</h3>
-      <div className="bar-chart">
-        {progressData.map((item) => (
-          <div className="bar-group" key={item.status}>
-            <div className="bar" style={{ height: `${(item.count / maxProgress) * 100}%` }} />
-            <span className="bar-label">{item.status}</span>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function TrendPanel() {
-  return (
-    <section className="panel chart-panel">
-      <h3>Response Rate Trend</h3>
-      <svg className="line-chart" viewBox="0 0 100 100" preserveAspectRatio="none" role="img">
-        <polyline
-          fill="none"
-          points={toPolyline(weeklyResponseData.map((item) => item.applications))}
-          stroke="#17202A"
-          strokeWidth="2"
-          vectorEffect="non-scaling-stroke"
-        />
-        <polyline
-          fill="none"
-          points={toPolyline(weeklyResponseData.map((item) => item.responses))}
-          stroke="#0F766E"
-          strokeWidth="2"
-          vectorEffect="non-scaling-stroke"
-        />
-      </svg>
-      <div className="legend">
-        <span>Applications</span>
-        <span>Responses</span>
-      </div>
-    </section>
-  );
-}
-
-function ApplicationsTable({
-  applications,
-  onDeleteApplication,
-}: {
-  applications: Application[];
-  onDeleteApplication: (id: number) => void;
-}) {
-  return (
-    <section className="panel table-panel">
-      <h3>Recent Applications</h3>
-      <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Company</th>
-              <th>Role</th>
-              <th>Status</th>
-              <th>Applied</th>
-              <th>Location</th>
-              <th>Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            {applications.map((application) => (
-              <tr key={application.id}>
-                <td>{application.companyName}</td>
-                <td>{application.roleTitle}</td>
-                <td>
-                  <span className={`badge ${application.status}`}>{application.status}</span>
-                </td>
-                <td>{application.appliedOn}</td>
-                <td>{application.location}</td>
-                <td>
-                  <button
-                    aria-label={`Delete application for ${application.companyName}`}
-                    className="icon-button danger"
-                    onClick={() => onDeleteApplication(application.id)}
-                    type="button"
-                  >
-                    <TrashIcon />
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </section>
-  );
-}
-
 function Dialog({
   children,
   onClose,
   title,
 }: {
-  children: React.ReactNode;
+  children: ReactNode;
   onClose: () => void;
   title: string;
 }) {
@@ -929,7 +1534,7 @@ function Dialog({
       >
         <div className="dialog-header">
           <h3>{title}</h3>
-          <button aria-label="Close dialog" onClick={onClose}>
+          <button aria-label="Close dialog" onClick={onClose} type="button">
             x
           </button>
         </div>
@@ -939,10 +1544,40 @@ function Dialog({
   );
 }
 
+function BootScreen() {
+  return (
+    <main className="auth-shell">
+      <section className="auth-panel panel">
+        <LoadingPanel label="Connecting to Supabase and restoring your session" />
+      </section>
+    </main>
+  );
+}
+
+function ConfigScreen({ title, message }: { title: string; message: string }) {
+  return (
+    <main className="auth-shell">
+      <section className="auth-panel panel">
+        <p className="eyebrow">Configuration</p>
+        <h1>{title}</h1>
+        <p className="muted">{message}</p>
+      </section>
+    </main>
+  );
+}
+
 function TrashIcon() {
   return (
     <svg aria-hidden="true" viewBox="0 0 24 24">
       <path d="M9 3.75A1.75 1.75 0 0 1 10.75 2h2.5A1.75 1.75 0 0 1 15 3.75V4h3.25a.75.75 0 0 1 0 1.5h-.59l-.8 11.1A2.25 2.25 0 0 1 14.61 19H9.39a2.25 2.25 0 0 1-2.25-2.4L6.34 5.5h-.59a.75.75 0 0 1 0-1.5H9v-.25ZM10.75 3.5a.25.25 0 0 0-.25.25V4h3v-.25a.25.25 0 0 0-.25-.25h-2.5Zm-2.82 2L8.32 16.48a.75.75 0 0 0 .75.77h5.86a.75.75 0 0 0 .75-.77L15.07 5.5H7.93ZM10 9.25a.75.75 0 0 1 .75.75v4a.75.75 0 0 1-1.5 0v-4a.75.75 0 0 1 .75-.75Zm4 0a.75.75 0 0 1 .75.75v4a.75.75 0 0 1-1.5 0v-4a.75.75 0 0 1 .75-.75Z" />
+    </svg>
+  );
+}
+
+function PencilIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24">
+      <path d="M4.75 19.25h2.9L18.4 8.5l-2.9-2.9L4.75 16.35v2.9Zm12.72-12.28 1.3-1.3a1.25 1.25 0 0 0 0-1.77l-.62-.62a1.25 1.25 0 0 0-1.77 0l-1.3 1.3 2.39 2.39Z" />
     </svg>
   );
 }
